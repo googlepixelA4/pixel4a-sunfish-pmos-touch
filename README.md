@@ -14,6 +14,8 @@ usable with the generic postmarketOS `qcom-sm7150` port:
 > edge, systemd and Phosh. Everything here is experimental. Keep a backup
 > image of `userdata` you can restore with `fastboot` before you start.
 
+What was tested how is listed under [Testing status](#testing-status).
+
 Not covered (still broken or untouched): audio, charging status
 (charge/discharge state), mobile data via IPA. Auto-rotation works but is
 inverted; see [Known issues](#known-issues).
@@ -53,6 +55,36 @@ on **U-Boot's own device tree**. The DTB here is U-Boot's tree plus small
 fragments, so the only differences from what the phone already boots are the
 fixes. (The kernel's own `sm7150-google-sunfish.dtb` was not tested with
 these fixes.)
+
+## Testing status
+
+On the phone (one unit, 2026-09-28):
+
+- Kernel `7.1_rc3-r2`, built with pmbootstrap from the APKBUILD in `aport/`
+  and our own copies of the same 14 patches.
+- The DTB, byte-identical to what `dts/build.sh` produces (same sha256),
+  installed under a different file name.
+- `system/etc/modprobe.d/*`, `stmfts-guard` and its unit (since then only
+  comments and an SPDX line were added). `system/etc/deviceinfo` differs from
+  the tested one only in the DTB file name.
+
+The repository's scripts, run end-to-end on the build machine:
+
+- `scripts/fetch-patches.sh`: fetched the series with b4 from lore and
+  miromraz's patch from GitHub. The 14 files applied to the official
+  7.1_rc3 source in APKBUILD order, and the resulting `stmfts.c` is
+  identical to the tested r2. **Not run:** `pmbootstrap checksum` and a
+  kernel build from these fetched files.
+- `dts/build.sh` (with dtc 1.7.0): run with the tested U-Boot image; the
+  output matches the tested DTB byte for byte.
+
+Not run as written:
+
+- Step 4 install commands (file name `sm7150-google-sunfish-pmos.dtb`, the
+  repo's `/etc/deviceinfo`): on the phone the same DTB had another name.
+- Rollback: the kernel downgrade (r2 → r0 file) was tested in a throwaway
+  apk root with apk-tools 3.0.8, not on the phone; the other rollback steps
+  were not exercised.
 
 ## Repository layout
 
@@ -249,9 +281,30 @@ Each part can be undone on its own:
 |---|---|
 | Touch loader | `sudo systemctl disable stmfts-guard.service` (blacklist keeps the driver out) |
 | DTB | `sudo rm /etc/deviceinfo && sudo mkinitfs` → boot entry without `devicetree`, U-Boot's tree again; reboot |
-| Kernel | Install the official package file: `sudo apk add --allow-untrusted linux-postmarketos-qcom-sm7150-7.1_rc3-r0.apk` (from the postmarketOS mirror), then unpin once online: `sudo apk add linux-postmarketos-qcom-sm7150` |
+| Kernel | See [Kernel rollback](#kernel-rollback) below |
 | IPA blacklist | `sudo rm /etc/modprobe.d/blacklist-ipa.conf`, reboot (the resets come back) |
 | Everything | `fastboot flash userdata <backup image>` |
+
+### Kernel rollback
+
+1. Remove the kernel pin: edit `/etc/apk/world` so the kernel line is just
+   `linux-postmarketos-qcom-sm7150` (drop `=7.1_rc3-r2` or `><Q1…`).
+2. Install the official package file (`linux-postmarketos-qcom-sm7150-7.1_rc3-r0.apk`
+   from the postmarketOS mirror):
+
+   ```
+   phone$ sudo apk add --allow-untrusted linux-postmarketos-qcom-sm7150-7.1_rc3-r0.apk
+   ```
+
+   `--allow-untrusted` is still needed for the **official** file: installed
+   by itself (not through the repository index), apk checks the package's own
+   signature, and that key is not among the phone's apk keys. Without the
+   flag apk-tools 3.0.8 refuses it with `UNTRUSTED signature`.
+3. Installing a file pins it again (`><Q1…`). Once online, return to the
+   repository kernel: `sudo apk add linux-postmarketos-qcom-sm7150`.
+
+In our test (apk-tools 3.0.8, throwaway root) the file install also replaced
+an `=7.1_rc3-r2` pin by itself; step 1 makes the intent explicit either way.
 
 `mkinitfs` (and every kernel install) re-runs boot-deploy, which rewrites
 `/boot/loader/entries/*.conf` from scratch. A `devicetree` line added by hand
@@ -259,8 +312,9 @@ is lost; use `/etc/deviceinfo` as above.
 
 ## Why each fix
 
-**Reset loop (IPA).** Early boots died with a silent cold reset: no panic, no
-watchdog message, and `pstore` empty afterwards (DRAM is cleared). The
+**Reset loop (IPA).** Early boots died with a silent reset: no panic, no
+watchdog message in the logs. `pstore` (ramoops) was empty after every
+reset, and also after clean reboots, so it gave no information here. The
 journal is misleading here: short boots appear to end at journald's flush,
 because later entries never reached the disk. The Mobian port traced the same
 loop with a USB-serial console to the IPA driver; blocking it gave 5/5 clean
@@ -310,7 +364,12 @@ we have not verified those values against the battery's specifications.
   `abuild` rejects, conflicts with `device-qcom-sm7150`). Once built, it
   bootlooped early in boot, with U-Boot's tree and with its own
   DTB. We did not find the cause and switched to the official package plus
-  patches.
+  patches. In hindsight (unconfirmed): its kernel ships `stmfts` as a module
+  that powers the chip at probe, and its own DTB has the touch node without a
+  `panel` link, so with its DTB it likely hit the same boot-time loop as our
+  r1. That cannot explain the boots on U-Boot's tree, which has no touch
+  node; IPA was not blocked at the time, so those were probably the IPA
+  resets.
 - **The watchdog theory.** U-Boot contains Qualcomm watchdog code and
   `qcom_wdt` is a module that loads late, so a bootloader-armed watchdog
   biting before Linux takes it over looked plausible for the reset loop.
