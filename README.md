@@ -14,8 +14,9 @@ usable with the generic postmarketOS `qcom-sm7150` port:
 > edge, systemd and Phosh. Everything here is experimental. Keep a backup
 > image of `userdata` you can restore with `fastboot` before you start.
 
-Not covered (still broken or untouched): motion/light/proximity sensors,
-audio, charging status (charge/discharge state), mobile data via IPA.
+Not covered (still broken or untouched): audio, charging status
+(charge/discharge state), mobile data via IPA. Auto-rotation works but is
+inverted; see [Known issues](#known-issues).
 
 ## Credits
 
@@ -231,6 +232,15 @@ History: `/var/lib/stmfts-guard/history`.
 Blind spots: a crash more than 60 s after loading is not caught; a shutdown
 while `modprobe` itself is still running leaves the marker (one skipped boot).
 
+## Known issues
+
+- **Auto-rotation is inverted.** Auto-rotation in Phosh works since the
+  sleepstate fix (a side effect of the ADSP no longer restarting), but the
+  screen turns the wrong way. Workaround: lock rotation in the Phosh quick
+  settings. A fix (accelerometer mount-matrix) is pending.
+- **Battery percentage is rough** and the charge state shows as unknown; see
+  [Battery](#why-each-fix) below.
+
 ## Rollback
 
 Each part can be undone on its own:
@@ -273,8 +283,9 @@ remoteproc remoteproc1: crash detected in adsp: type fatal error
 ```
 
 Adding the node (Mobian commit ff5dc4c) stopped it. Mainline `smp2p.c`
-creates the entry from the node; no extra driver is needed. This does not
-turn the sensors on (that also needs the Mobian port's hexagonrpcd patches).
+creates the entry from the node; no extra driver is needed. As a side
+effect, auto-rotation started working once the ADSP stopped restarting, but
+it is inverted (see [Known issues](#known-issues)).
 
 **Battery.** The kernel already has the PM6150 fuel-gauge driver (`qcom_qg`,
 built as a module), but U-Boot's tree leaves the gauge disabled and has no
