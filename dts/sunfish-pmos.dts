@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Pixel 4a (sunfish) DTB for postmarketOS qcom-sm7150 + U-Boot:
+ * U-Boot's own device tree (decompiled to uboot.dts by build.sh) plus the
+ * fragments below, applied in order.
+ */
+/include/ "uboot.dts"
+/include/ "00-dtc-roundtrip-fix.dts"
+/include/ "01-touch.dts"
+/include/ "02-panel-link-reset-pin.dts"
+/include/ "03-adsp-sleepstate.dts"
+/include/ "04-battery-gauge.dts"

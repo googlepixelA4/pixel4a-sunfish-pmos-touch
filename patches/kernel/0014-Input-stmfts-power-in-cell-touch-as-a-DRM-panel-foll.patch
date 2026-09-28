@@ -1,0 +1,518 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: user <user@example.invalid>
+Date: Mon, 28 Sep 2026 00:00:00 +0000
+Subject: [PATCH 14/14] Input: stmfts - power in-cell touch as a DRM panel
+ follower
+
+On the Pixel 4a (sunfish) the FTM5 touch IC sits inside the OLED panel
+module and shares its vdd/avdd supplies (l13a/l7c) with the panel.
+Powering and configuring it at probe, independent of the panel, loops
+the device at boot. Port the DRM panel-follower approach from
+miromraz/linux sunfish-venus-v7.2: with a "panel" phandle in DT, the
+chip is powered in panel_prepared() and powered off in
+panel_unpreparing(); without one, probe powers it as before.
+
+Also fix the failure paths:
+- configure() disables the IRQ again when a command fails after it was
+  enabled; IRQ state is tracked so enable/disable stay balanced across
+  failed and repeated power-ons.
+- A failed power-on no longer drops the shared supplies. The chip is
+  held in reset and the supplies are released in power_off.
+
+Power state is serialised by a new power_lock rather than sdata->mutex,
+which the IRQ thread takes while power-on waits for command completions.
+Runtime PM callbacks are no-ops while the chip is unpowered; input_open
+marks the device running first, so panel_prepared() can restart
+scanning when power arrives.
+
+FTS4 and FTS5 support is otherwise unchanged.
+---
+ drivers/input/touchscreen/Kconfig  |   1 +
+ drivers/input/touchscreen/stmfts.c | 290 ++++++++++++++++++++++++-----
+ 2 files changed, 247 insertions(+), 44 deletions(-)
+
+diff --git a/drivers/input/touchscreen/Kconfig b/drivers/input/touchscreen/Kconfig
+index c1e1f0f04..a463ef0a8 100644
+--- a/drivers/input/touchscreen/Kconfig
++++ b/drivers/input/touchscreen/Kconfig
+@@ -1270,6 +1270,7 @@ config TOUCHSCREEN_STMFTS
+ 	tristate "STMicroelectronics STMFTS touchscreen"
+ 	depends on I2C
+ 	depends on LEDS_CLASS
++	depends on DRM || !DRM
+ 	help
+ 	  Say Y here if you want support for STMicroelectronics
+ 	  STMFTS touchscreen.
+diff --git a/drivers/input/touchscreen/stmfts.c b/drivers/input/touchscreen/stmfts.c
+index 806780b11..05d9a6a87 100644
+--- a/drivers/input/touchscreen/stmfts.c
++++ b/drivers/input/touchscreen/stmfts.c
+@@ -20,6 +20,8 @@
+ #include <linux/pm_runtime.h>
+ #include <linux/regulator/consumer.h>
+ 
++#include <drm/drm_panel.h>
++
+ /* I2C commands */
+ #define STMFTS_READ_INFO			0x80
+ #define STMFTS_READ_STATUS			0x84
+@@ -138,6 +140,24 @@ struct stmfts_data {
+ 	bool hover_enabled;
+ 	bool stylus_enabled;
+ 	bool running;
++
++	/*
++	 * Power state. Serialised by power_lock, not by mutex: the IRQ thread
++	 * takes mutex, and power-on waits for command completions that the
++	 * IRQ thread signals.
++	 */
++	struct mutex power_lock;
++	bool powered;
++	bool supplies_enabled;
++	bool irq_enabled;
++
++	/*
++	 * In-cell touch (e.g. Pixel 4a sunfish) shares its supplies with the
++	 * DSI panel. With a "panel" phandle in DT the chip is powered in
++	 * lockstep with the panel's prepare/unprepare instead of at probe.
++	 */
++	struct drm_panel_follower panel_follower;
++	bool is_panel_follower;
+ };
+ 
+ struct stmfts_chip_ops {
+@@ -149,6 +169,7 @@ struct stmfts_chip_ops {
+ 	void (*parse_events)(struct stmfts_data *sdata);
+ 	int  (*set_hover)(struct stmfts_data *sdata, bool enable);
+ 	int  (*runtime_resume)(struct stmfts_data *sdata);
++	int  (*start_scan)(struct stmfts_data *sdata);
+ };
+ 
+ static int stmfts_brightness_set(struct led_classdev *led_cdev,
+@@ -548,6 +569,22 @@ static irqreturn_t stmfts_irq_handler(int irq, void *dev)
+ 	return IRQ_HANDLED;
+ }
+ 
++static void stmfts_irq_on(struct stmfts_data *sdata)
++{
++	if (!sdata->irq_enabled) {
++		enable_irq(sdata->client->irq);
++		sdata->irq_enabled = true;
++	}
++}
++
++static void stmfts_irq_off(struct stmfts_data *sdata)
++{
++	if (sdata->irq_enabled) {
++		disable_irq(sdata->client->irq);
++		sdata->irq_enabled = false;
++	}
++}
++
+ static int stmfts_command(struct stmfts_data *sdata, const u8 cmd)
+ {
+ 	int err;
+@@ -628,21 +665,34 @@ static int stmfts5_input_open(struct input_dev *dev)
+ 	struct stmfts_data *sdata = input_get_drvdata(dev);
+ 	int err;
+ 
+-	err = pm_runtime_resume_and_get(&sdata->client->dev);
+-	if (err)
+-		return err;
+-
++	/*
++	 * Mark running before resuming: if the chip is not powered yet (panel
++	 * still off), stmfts_panel_prepared() will see this and start scanning.
++	 */
+ 	mutex_lock(&sdata->mutex);
+ 	sdata->running = true;
+ 	mutex_unlock(&sdata->mutex);
+ 
+-	err = stmfts5_set_scan_mode(sdata, 0xff);
++	err = pm_runtime_resume_and_get(&sdata->client->dev);
++	if (err)
++		goto err_not_running;
++
++	scoped_guard(mutex, &sdata->power_lock) {
++		if (sdata->powered)
++			err = stmfts5_set_scan_mode(sdata, 0xff);
++	}
+ 	if (err) {
+ 		pm_runtime_put_sync(&sdata->client->dev);
+-		return err;
++		goto err_not_running;
+ 	}
+ 
+ 	return 0;
++
++err_not_running:
++	mutex_lock(&sdata->mutex);
++	sdata->running = false;
++	mutex_unlock(&sdata->mutex);
++	return err;
+ }
+ 
+ static void stmfts_input_close(struct input_dev *dev)
+@@ -683,10 +733,15 @@ static void stmfts5_input_close(struct input_dev *dev)
+ 	struct stmfts_data *sdata = input_get_drvdata(dev);
+ 	int err;
+ 
+-	err = stmfts5_set_scan_mode(sdata, 0x00);
+-	if (err)
+-		dev_warn(&sdata->client->dev,
+-			 "failed to disable touchscreen: %d\n", err);
++	scoped_guard(mutex, &sdata->power_lock) {
++		if (sdata->powered) {
++			err = stmfts5_set_scan_mode(sdata, 0x00);
++			if (err)
++				dev_warn(&sdata->client->dev,
++					 "failed to disable touchscreen: %d\n",
++					 err);
++		}
++	}
+ 
+ 	mutex_lock(&sdata->mutex);
+ 	sdata->running = false;
+@@ -846,17 +901,17 @@ static int stmfts_configure(struct stmfts_data *sdata)
+ 	if (err)
+ 		return err;
+ 
+-	enable_irq(sdata->client->irq);
++	stmfts_irq_on(sdata);
+ 
+ 	msleep(50);
+ 
+ 	err = stmfts_command(sdata, STMFTS_SYSTEM_RESET);
+ 	if (err)
+-		return err;
++		goto err_irq_off;
+ 
+ 	err = stmfts_command(sdata, STMFTS_SLEEP_OUT);
+ 	if (err)
+-		return err;
++		goto err_irq_off;
+ 
+ 	/* optional tuning */
+ 	err = stmfts_command(sdata, STMFTS_MS_CX_TUNING);
+@@ -872,7 +927,7 @@ static int stmfts_configure(struct stmfts_data *sdata)
+ 
+ 	err = stmfts_command(sdata, STMFTS_FULL_FORCE_CALIBRATION);
+ 	if (err)
+-		return err;
++		goto err_irq_off;
+ 
+ 	/*
+ 	 * At this point no one is using the touchscreen
+@@ -881,32 +936,59 @@ static int stmfts_configure(struct stmfts_data *sdata)
+ 	(void) i2c_smbus_write_byte(sdata->client, STMFTS_SLEEP_IN);
+ 
+ 	return 0;
++
++err_irq_off:
++	stmfts_irq_off(sdata);
++	return err;
+ }
+ 
+-static int stmfts_power_on(struct stmfts_data *sdata)
++static int stmfts_power_on_locked(struct stmfts_data *sdata)
+ {
+ 	int err;
+ 
+-	err = regulator_bulk_enable(ARRAY_SIZE(stmfts_supplies),
+-				    sdata->supplies);
+-	if (err)
+-		return err;
++	lockdep_assert_held(&sdata->power_lock);
+ 
+-	/*
+-	 * The datasheet does not specify the power on time, but considering
+-	 * that the reset time is < 10ms, I sleep 20ms to be sure
+-	 */
+-	msleep(20);
++	if (sdata->powered)
++		return 0;
++
++	if (!sdata->supplies_enabled) {
++		err = regulator_bulk_enable(ARRAY_SIZE(stmfts_supplies),
++					    sdata->supplies);
++		if (err)
++			return err;
++		sdata->supplies_enabled = true;
++
++		/*
++		 * The datasheet does not specify the power on time, but
++		 * considering that the reset time is < 10ms, I sleep 20ms
++		 * to be sure
++		 */
++		msleep(20);
++	}
+ 
+ 	if (sdata->reset_gpio)
+ 		stmfts_reset(sdata);
+ 
+ 	err = sdata->ops->configure(sdata);
+-	if (err)
+-		regulator_bulk_disable(ARRAY_SIZE(stmfts_supplies),
+-				       sdata->supplies);
++	if (err) {
++		/*
++		 * configure() leaves the IRQ disabled on failure. Keep the
++		 * chip in reset but do NOT drop the supplies here: vdd/avdd
++		 * are shared with the display panel, and switching them off
++		 * while the panel still relies on them can take the display
++		 * (and more) down. They are released in stmfts_power_off().
++		 */
++		stmfts_irq_off(sdata);
++		if (sdata->reset_gpio)
++			gpiod_set_value_cansleep(sdata->reset_gpio, 1);
++		dev_err(&sdata->client->dev,
++			"power on failed: %d (supplies left enabled)\n", err);
++		return err;
++	}
+ 
+-	return err;
++	sdata->powered = true;
++
++	return 0;
+ }
+ 
+ static int stmfts5_configure(struct stmfts_data *sdata)
+@@ -939,7 +1021,7 @@ static int stmfts5_configure(struct stmfts_data *sdata)
+ 		return -ETIMEDOUT;
+ 	}
+ 
+-	enable_irq(sdata->client->irq);
++	stmfts_irq_on(sdata);
+ 
+ 	return 0;
+ }
+@@ -950,22 +1032,95 @@ static void stmfts5_chip_power_off(struct stmfts_data *sdata)
+ 	msleep(20);
+ }
+ 
+-static void stmfts_power_off(void *data)
++static void stmfts_power_off_locked(struct stmfts_data *sdata)
+ {
+-	struct stmfts_data *sdata = data;
++	lockdep_assert_held(&sdata->power_lock);
+ 
+-	disable_irq(sdata->client->irq);
++	stmfts_irq_off(sdata);
+ 
+ 	if (sdata->reset_gpio)
+ 		gpiod_set_value_cansleep(sdata->reset_gpio, 1);
+ 
+-	if (sdata->ops->power_off)
++	if (sdata->powered && sdata->ops->power_off)
+ 		sdata->ops->power_off(sdata);
+ 
+-	regulator_bulk_disable(ARRAY_SIZE(stmfts_supplies),
+-			       sdata->supplies);
++	if (sdata->supplies_enabled) {
++		regulator_bulk_disable(ARRAY_SIZE(stmfts_supplies),
++				       sdata->supplies);
++		sdata->supplies_enabled = false;
++	}
++
++	sdata->powered = false;
++}
++
++static void stmfts_power_off(void *data)
++{
++	struct stmfts_data *sdata = data;
++
++	guard(mutex)(&sdata->power_lock);
++	stmfts_power_off_locked(sdata);
+ }
+ 
++static int stmfts_start_scan(struct stmfts_data *sdata)
++{
++	return i2c_smbus_write_byte(sdata->client, STMFTS_MS_MT_SENSE_ON);
++}
++
++static int stmfts5_start_scan(struct stmfts_data *sdata)
++{
++	return stmfts5_set_scan_mode(sdata, 0xff);
++}
++
++static int stmfts_panel_prepared(struct drm_panel_follower *follower)
++{
++	struct stmfts_data *sdata =
++		container_of(follower, struct stmfts_data, panel_follower);
++	bool running;
++	int err;
++
++	guard(mutex)(&sdata->power_lock);
++
++	err = stmfts_power_on_locked(sdata);
++	if (err)
++		return err;
++
++	mutex_lock(&sdata->mutex);
++	running = sdata->running;
++	mutex_unlock(&sdata->mutex);
++
++	/*
++	 * The input device was opened while the chip was off (or the panel
++	 * power-cycled it): bring it out of sleep and restart scanning,
++	 * which input_open() could not do without power.
++	 */
++	if (running) {
++		err = sdata->ops->runtime_resume(sdata);
++		if (!err && sdata->ops->start_scan)
++			err = sdata->ops->start_scan(sdata);
++		if (err)
++			dev_warn(&sdata->client->dev,
++				 "failed to restart scanning: %d\n", err);
++	}
++
++	return 0;
++}
++
++static int stmfts_panel_unpreparing(struct drm_panel_follower *follower)
++{
++	struct stmfts_data *sdata =
++		container_of(follower, struct stmfts_data, panel_follower);
++
++	guard(mutex)(&sdata->power_lock);
++	stmfts_power_off_locked(sdata);
++
++	return 0;
++}
++
++static const struct drm_panel_follower_funcs stmfts_panel_follower_funcs = {
++	.panel_prepared = stmfts_panel_prepared,
++	.panel_unpreparing = stmfts_panel_unpreparing,
++};
++
+ static int stmfts_setup_input(struct stmfts_data *sdata)
+ {
+ 	struct device *dev = &sdata->client->dev;
+@@ -1069,6 +1224,7 @@ static int stmfts_probe(struct i2c_client *client)
+ 
+ 	sdata->client = client;
+ 	mutex_init(&sdata->mutex);
++	mutex_init(&sdata->power_lock);
+ 	init_completion(&sdata->cmd_done);
+ 
+ 	sdata->ops = of_device_get_match_data(dev);
+@@ -1125,14 +1281,11 @@ static int stmfts_probe(struct i2c_client *client)
+ 
+ 	dev_dbg(dev, "initializing ST-Microelectronics FTS...\n");
+ 
+-	err = stmfts_power_on(sdata);
+-	if (err)
+-		return err;
+-
+-	err = devm_add_action_or_reset(dev, stmfts_power_off, sdata);
+-	if (err)
+-		return err;
+-
++	/*
++	 * Register the input device first: in panel-follower mode the chip
++	 * may be powered (and start reporting) from inside
++	 * devm_drm_panel_add_follower() if the panel is already prepared.
++	 */
+ 	err = input_register_device(sdata->input);
+ 	if (err)
+ 		return err;
+@@ -1151,6 +1304,29 @@ static int stmfts_probe(struct i2c_client *client)
+ 		}
+ 	}
+ 
++	if (drm_is_panel_follower(dev)) {
++		sdata->panel_follower.funcs = &stmfts_panel_follower_funcs;
++		err = devm_drm_panel_add_follower(dev, &sdata->panel_follower);
++		if (err)
++			return dev_err_probe(dev, err,
++					     "failed to follow panel\n");
++		sdata->is_panel_follower = true;
++	} else {
++		err = devm_add_action_or_reset(dev, stmfts_power_off, sdata);
++		if (err)
++			return err;
++
++		/*
++		 * Stay bound on failure so the (possibly shared) supplies are
++		 * not dropped behind the other consumers' back; they are
++		 * released on unbind by stmfts_power_off().
++		 */
++		scoped_guard(mutex, &sdata->power_lock)
++			err = stmfts_power_on_locked(sdata);
++		if (err)
++			dev_err(dev, "touchscreen not powered: %d\n", err);
++	}
++
+ 	pm_runtime_enable(dev);
+ 	device_enable_async_suspend(dev);
+ 
+@@ -1167,6 +1343,12 @@ static int stmfts_runtime_suspend(struct device *dev)
+ 	struct stmfts_data *sdata = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	guard(mutex)(&sdata->power_lock);
++
++	/* Chip unpowered (panel off): nothing to put to sleep. */
++	if (!sdata->powered)
++		return 0;
++
+ 	ret = i2c_smbus_write_byte(sdata->client, STMFTS_SLEEP_IN);
+ 	if (ret)
+ 		dev_warn(dev, "failed to suspend device: %d\n", ret);
+@@ -1229,6 +1411,15 @@ static int stmfts_runtime_resume(struct device *dev)
+ 	struct stmfts_data *sdata = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	guard(mutex)(&sdata->power_lock);
++
++	/*
++	 * Chip unpowered (panel off): stmfts_panel_prepared() wakes it and
++	 * restarts scanning once power is back.
++	 */
++	if (!sdata->powered)
++		return 0;
++
+ 	ret = sdata->ops->runtime_resume(sdata);
+ 	if (ret)
+ 		dev_err(dev, "failed to resume device: %d\n", ret);
+@@ -1240,6 +1431,10 @@ static int stmfts_suspend(struct device *dev)
+ {
+ 	struct stmfts_data *sdata = dev_get_drvdata(dev);
+ 
++	/* The panel's unprepare powers a follower down. */
++	if (sdata->is_panel_follower)
++		return 0;
++
+ 	stmfts_power_off(sdata);
+ 
+ 	return 0;
+@@ -1249,7 +1444,12 @@ static int stmfts_resume(struct device *dev)
+ {
+ 	struct stmfts_data *sdata = dev_get_drvdata(dev);
+ 
+-	return stmfts_power_on(sdata);
++	if (sdata->is_panel_follower)
++		return 0;
++
++	guard(mutex)(&sdata->power_lock);
++
++	return stmfts_power_on_locked(sdata);
+ }
+ 
+ static const struct dev_pm_ops stmfts_pm_ops = {
+@@ -1266,6 +1466,7 @@ static const struct stmfts_chip_ops stmfts4_ops = {
+ 	.parse_events	= stmfts_parse_events,
+ 	.set_hover	= stmfts_set_hover,
+ 	.runtime_resume	= stmfts_chip_runtime_resume,
++	.start_scan	= stmfts_start_scan,
+ };
+ 
+ static const struct stmfts_chip_ops stmfts5_ops = {
+@@ -1276,6 +1477,7 @@ static const struct stmfts_chip_ops stmfts5_ops = {
+ 	.input_close	= stmfts5_input_close,
+ 	.parse_events	= stmfts5_parse_events,
+ 	.runtime_resume	= stmfts5_chip_runtime_resume,
++	.start_scan	= stmfts5_start_scan,
+ };
+ 
+ static const struct of_device_id stmfts_of_match[] = {

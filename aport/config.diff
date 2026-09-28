@@ -1,0 +1,13 @@
+diff --git a/config-postmarketos-qcom-sm7150.aarch64 b/config-postmarketos-qcom-sm7150.aarch64
+index e1d2563928..9e3b119287 100644
+--- a/config-postmarketos-qcom-sm7150.aarch64
++++ b/config-postmarketos-qcom-sm7150.aarch64
+@@ -2961,7 +2961,7 @@ CONFIG_TOUCHSCREEN_NT36XXX_SPI=y
+ # CONFIG_TOUCHSCREEN_SILEAD is not set
+ # CONFIG_TOUCHSCREEN_SIS_I2C is not set
+ # CONFIG_TOUCHSCREEN_ST1232 is not set
+-# CONFIG_TOUCHSCREEN_STMFTS is not set
++CONFIG_TOUCHSCREEN_STMFTS=m
+ # CONFIG_TOUCHSCREEN_SUR40 is not set
+ # CONFIG_TOUCHSCREEN_SURFACE3_SPI is not set
+ # CONFIG_TOUCHSCREEN_SX8654 is not set

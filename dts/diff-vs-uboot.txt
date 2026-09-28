@@ -1,0 +1,39 @@
+ADDED /battery:charge-full-design-microamp-hours 00 2e ff 40
+ADDED /battery:compatible 73 69 6d 70 6c 65 2d 62 61 74 74 65 72 79 00
+ADDED /battery:phandle 00 00 00 e1
+ADDED /battery:voltage-max-design-microvolt 00 43 e6 d0
+ADDED /battery:voltage-min-design-microvolt 00 32 5a a0
+ADDED /smp2p-adsp/sleepstate-out:#qcom,smem-state-cells 00 00 00 01
+ADDED /smp2p-adsp/sleepstate-out:qcom,entry-name 73 6c 65 65 70 73 74 61 74 65 00
+ADDED /soc@0/display-subsystem@ae00000/dsi@ae94000/panel@0:phandle 00 00 00 e0
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:avdd-supply 00 00 00 a5
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:compatible 73 74 2c 73 74 6d 66 74 73 35 00
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:interrupts-extended 00 00 00 47 00 00 00 09 00 00 00 08
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:mode-switch-gpios 00 00 00 47 00 00 00 48 00 00 00 01
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:panel 00 00 00 e0
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:pinctrl-0 00 00 00 dd 00 00 00 de 00 00 00 df
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:pinctrl-names 64 65 66 61 75 6c 74 00
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:reg 00 00 00 49
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:reset-gpios 00 00 00 47 00 00 00 08 00 00 00 01
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:touchscreen-size-x 00 00 04 38
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:touchscreen-size-y 00 00 09 24
+ADDED /soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49:vdd-supply 00 00 00 a4
+ADDED /soc@0/pinctrl@3500000/touch-irq-default-state:bias-disable 
+ADDED /soc@0/pinctrl@3500000/touch-irq-default-state:drive-strength 00 00 00 02
+ADDED /soc@0/pinctrl@3500000/touch-irq-default-state:function 67 70 69 6f 00
+ADDED /soc@0/pinctrl@3500000/touch-irq-default-state:phandle 00 00 00 dd
+ADDED /soc@0/pinctrl@3500000/touch-irq-default-state:pins 67 70 69 6f 39 00
+ADDED /soc@0/pinctrl@3500000/touch-reset-default-state:bias-disable 
+ADDED /soc@0/pinctrl@3500000/touch-reset-default-state:drive-strength 00 00 00 02
+ADDED /soc@0/pinctrl@3500000/touch-reset-default-state:function 67 70 69 6f 00
+ADDED /soc@0/pinctrl@3500000/touch-reset-default-state:phandle 00 00 00 de
+ADDED /soc@0/pinctrl@3500000/touch-reset-default-state:pins 67 70 69 6f 38 00
+ADDED /soc@0/spmi@c440000/pmic@0/gpio@c000/touch-power-default-state:bias-disable 
+ADDED /soc@0/spmi@c440000/pmic@0/gpio@c000/touch-power-default-state:function 6e 6f 72 6d 61 6c 00
+ADDED /soc@0/spmi@c440000/pmic@0/gpio@c000/touch-power-default-state:output-high 
+ADDED /soc@0/spmi@c440000/pmic@0/gpio@c000/touch-power-default-state:phandle 00 00 00 df
+ADDED /soc@0/spmi@c440000/pmic@0/gpio@c000/touch-power-default-state:pins 67 70 69 6f 34 00
+ADDED /soc@0/spmi@c440000/pmic@0/gpio@c000/touch-power-default-state:power-source 00 00 00 01
+ADDED /soc@0/spmi@c440000/pmic@0/gpio@c000/touch-power-default-state:qcom,drive-strength 00 00 00 02
+ADDED /soc@0/spmi@c440000/pmic@0/qgauge@4800:monitored-battery 00 00 00 e1
+CHANGED /soc@0/spmi@c440000/pmic@0/qgauge@4800:status 6f 6b 61 79 00

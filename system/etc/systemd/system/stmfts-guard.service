@@ -1,0 +1,18 @@
+[Unit]
+Description=Load stmfts touch driver early (skipped if the last attempt crashed)
+Documentation=file:/usr/local/sbin/stmfts-guard
+DefaultDependencies=no
+# /var/lib must be mounted read-write before the marker can be written.
+After=local-fs.target systemd-remount-fs.service systemd-journald.socket
+Before=sysinit.target shutdown.target
+# Stopped (SIGTERM) at shutdown, so a clean reboot inside the window clears
+# the marker instead of being mistaken for a crash.
+Conflicts=shutdown.target stmfts-late.service
+
+[Service]
+Type=exec
+ExecStart=/usr/local/sbin/stmfts-guard
+TimeoutStopSec=15
+
+[Install]
+WantedBy=sysinit.target

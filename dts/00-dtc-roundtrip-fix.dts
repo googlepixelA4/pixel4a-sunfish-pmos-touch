@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Not a functional change. dtc decompiles these two 32-bit values from
+ * U-Boot's DTB as ambiguous strings ("\01Q", "\02K") and would recompile
+ * them to 3 bytes. Restore the original values so the rebuilt tree is
+ * byte-identical to U-Boot's apart from the fragments below.
+ */
+&{/soc@0/rsc@18200000/regulators-0/ldo17} {
+	regulator-max-microvolt = <0x315100>;	/* 3232000 */
+};
+
+&{/soc@0/rsc@18200000/regulators-1/bob} {
+	regulator-min-microvolt = <0x324b00>;	/* 3296000 */
+};

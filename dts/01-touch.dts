@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * STMicro FTM5 touchscreen on i2c7 @ 0x49, from miromraz's DT patch
+ * (github.com/miromraz/pixel4a-stmfts5-mainline, patches/0002).
+ * U-Boot's DTB has no __symbols__, so labels are replaced by node paths.
+ * IRQ_TYPE_LEVEL_LOW = 8, GPIO_ACTIVE_LOW = 1.
+ * The reset-pin state is changed again in 02-panel-link-reset-pin.dts.
+ */
+&{/soc@0/pinctrl@3500000} {
+	touch-irq-default-state {
+		pins = "gpio9";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	touch-reset-default-state {
+		pins = "gpio8";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+		output-high;
+	};
+};
+
+/* PM6150 GPIO 4: load switch upstream of the touch supplies. */
+&{/soc@0/spmi@c440000/pmic@0/gpio@c000} {
+	touch-power-default-state {
+		pins = "gpio4";
+		function = "normal";
+		qcom,drive-strength = <2>;
+		power-source = <1>;
+		bias-disable;
+		output-high;
+	};
+};
+
+/* i2c7 */
+&{/soc@0/geniqup@ac0000/i2c@a84000} {
+	touchscreen@49 {
+		compatible = "st,stmfts5";
+		reg = <0x49>;
+
+		interrupts-extended = <&{/soc@0/pinctrl@3500000} 9 8>;
+		reset-gpios = <&{/soc@0/pinctrl@3500000} 8 1>;
+		/* tlmm 72 routes the touch IRQ to the AP (low) or SLPI (high) */
+		mode-switch-gpios = <&{/soc@0/pinctrl@3500000} 72 1>;
+
+		/* shared with the OLED panel: vddio (l13a) and vdda (l7c) */
+		vdd-supply = <&{/soc@0/rsc@18200000/regulators-0/ldo13}>;
+		avdd-supply = <&{/soc@0/rsc@18200000/regulators-1/ldo7}>;
+
+		touchscreen-size-x = <1080>;
+		touchscreen-size-y = <2340>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&{/soc@0/pinctrl@3500000/touch-irq-default-state}
+			     &{/soc@0/pinctrl@3500000/touch-reset-default-state}
+			     &{/soc@0/spmi@c440000/pmic@0/gpio@c000/touch-power-default-state}>;
+	};
+};

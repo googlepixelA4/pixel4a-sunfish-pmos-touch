@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * AP "sleepstate" SMP2P outbound entry for the ADSP. Without it the ADSP
+ * sensor firmware's CHRE kills sensor_process about every 10 s
+ * ("sar.cc:27 chre_utils fatal") and the ADSP restarts in a loop.
+ * Root cause and fix found by the Mobian port, commit ff5dc4c:
+ * github.com/miromraz/mobian-pixel4a-port/commit/ff5dc4cd12d92204dc0ac0750a4e21993831b465
+ * Mainline smp2p.c creates the entry from this node; no extra driver.
+ */
+&{/smp2p-adsp} {
+	sleepstate-out {
+		qcom,entry-name = "sleepstate";
+		#qcom,smem-state-cells = <1>;
+	};
+};

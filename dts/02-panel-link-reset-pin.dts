@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * As in miromraz/linux branch sunfish-venus-v7.2 (Mobian port):
+ * - "panel" makes stmfts a DRM panel follower (needs kernel patch 0014):
+ *   the chip is powered after the OLED panel is prepared, not at probe.
+ * - reset pin: bias-disable, no output-high (pinctrl no longer releases
+ *   the chip from reset before the driver does).
+ */
+&{/soc@0/geniqup@ac0000/i2c@a84000/touchscreen@49} {
+	panel = <&{/soc@0/display-subsystem@ae00000/dsi@ae94000/panel@0}>;
+};
+
+&{/soc@0/pinctrl@3500000/touch-reset-default-state} {
+	/delete-property/ bias-pull-up;
+	/delete-property/ output-high;
+	bias-disable;
+};

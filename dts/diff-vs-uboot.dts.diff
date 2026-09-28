@@ -1,0 +1,111 @@
+--- uboot.dts
++++ sm7150-google-sunfish-pmos.dts
+@@ -37,6 +37,14 @@
+ 		wifi0 = "/soc@0/wifi@18800000";
+ 	};
+ 
++	battery {
++		charge-full-design-microamp-hours = <0x2eff40>;
++		compatible = "simple-battery";
++		phandle = <0xe1>;
++		voltage-max-design-microvolt = <0x43e6d0>;
++		voltage-min-design-microvolt = <0x325aa0>;
++	};
++
+ 	chosen {
+ 		#address-cells = <0x02>;
+ 		#size-cells = <0x02>;
+@@ -882,6 +890,11 @@
+ 			phandle = <0x74>;
+ 			qcom,entry-name = "slave-kernel";
+ 		};
++
++		sleepstate-out {
++			#qcom,smem-state-cells = <0x01>;
++			qcom,entry-name = "sleepstate";
++		};
+ 	};
+ 
+ 	smp2p-cdsp {
+@@ -1211,6 +1224,7 @@
+ 
+ 				panel@0 {
+ 					compatible = "google,ams581vf01-sunfish\0samsung,ams581vf01";
++					phandle = <0xe0>;
+ 					pinctrl-0 = <0xa9 0xaa>;
+ 					pinctrl-names = "default";
+ 					reg = <0x00>;
+@@ -1640,6 +1654,21 @@
+ 				reg = <0x00 0xa84000 0x00 0x4000>;
+ 				required-opps = <0x23>;
+ 				status = "okay";
++
++				touchscreen@49 {
++					avdd-supply = <0xa5>;
++					compatible = "st,stmfts5";
++					interrupts-extended = <0x47 0x09 0x08>;
++					mode-switch-gpios = <0x47 0x48 0x01>;
++					panel = <0xe0>;
++					pinctrl-0 = <0xdd 0xde 0xdf>;
++					pinctrl-names = "default";
++					reg = <0x49>;
++					reset-gpios = <0x47 0x08 0x01>;
++					touchscreen-size-x = <0x438>;
++					touchscreen-size-y = <0x924>;
++					vdd-supply = <0xa4>;
++				};
+ 			};
+ 
+ 			i2c@a88000 {
+@@ -2745,6 +2774,22 @@
+ 				function = "ter_mi2s";
+ 				pins = "gpio53\0gpio54\0gpio55\0gpio56";
+ 			};
++
++			touch-irq-default-state {
++				bias-disable;
++				drive-strength = <0x02>;
++				function = "gpio";
++				phandle = <0xdd>;
++				pins = "gpio9";
++			};
++
++			touch-reset-default-state {
++				bias-disable;
++				drive-strength = <0x02>;
++				function = "gpio";
++				phandle = <0xde>;
++				pins = "gpio8";
++			};
+ 		};
+ 
+ 		pinctrl@62b52000 {
+@@ -3701,6 +3746,16 @@
+ 					interrupt-controller;
+ 					phandle = <0xb3>;
+ 					reg = <0xc000>;
++
++					touch-power-default-state {
++						bias-disable;
++						function = "normal";
++						output-high;
++						phandle = <0xdf>;
++						pins = "gpio4";
++						power-source = <0x01>;
++						qcom,drive-strength = <0x02>;
++					};
+ 				};
+ 
+ 				nvram@b600 {
+@@ -3740,9 +3795,10 @@
+ 					compatible = "qcom,pm6150-qg";
+ 					io-channel-names = "batt-therm";
+ 					io-channels = <0xb1 0x4a>;
++					monitored-battery = <0xe1>;
+ 					nvmem = <0xb2>;
+ 					reg = <0x4800>;
+-					status = "disabled";
++					status = "okay";
+ 				};
+ 
+ 				rtc@6000 {

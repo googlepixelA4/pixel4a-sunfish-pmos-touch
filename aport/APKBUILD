@@ -1,0 +1,102 @@
+# Co-Maintainer: David Wronek <david@mainlining.org>
+# Co-Maintainer: Aelin <aelin@postmarketos.org>
+maintainer="Danila Tikhonov <danila@jiaxyga.com>"
+_flavor="postmarketos-qcom-sm7150"
+pkgname=linux-$_flavor
+pkgver=7.1_rc3
+pkgrel=2
+pkgdesc="Mainline Kernel fork for SM7150 devices"
+arch="aarch64"
+_carch="arm64"
+url="https://github.com/sm7150-mainline/linux"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps
+	pmb:cross-native
+	pmb:kconfigcheck-community
+	"
+makedepends="
+	bison
+	clang
+	findutils
+	flex
+	lld
+	llvm
+	openssl-dev
+	perl
+	postmarketos-installkernel
+	python3
+	zstd
+"
+
+_tag="$pkgver"
+
+# Source
+source="
+	$pkgname-v$_tag.tar.gz::$url/archive/v$_tag.tar.gz
+	config-$_flavor.$arch
+	0001-Input-stmfts-Fix-the-MODULE_LICENSE-string.patch
+	0002-Input-stmfts-Use-dev-struct-directly.patch
+	0003-Input-stmfts-Switch-to-devm_regulator_bulk_get_const.patch
+	0004-Input-stmfts-abstract-reading-information-from-the-f.patch
+	0005-Input-stmfts-disable-regulators-when-power-on-fails.patch
+	0006-Input-stmfts-use-client-to-make-future-code-cleaner.patch
+	0007-dt-bindings-input-touchscreen-st-stmfts-Introduce-re.patch
+	0008-Input-stmfts-add-optional-reset-GPIO-support.patch
+	0009-dt-bindings-input-touchscreen-st-stmfts-Introduce-ST.patch
+	0010-Input-stmfts-support-FTS5.patch
+	0011-arm64-dts-qcom-sdm845-google-Add-STM-FTS-touchscreen.patch
+	0012-Input-stmfts-poll-for-CONTROLLER_READY-event-in-stmf.patch
+	0013-Input-stmfts-include-linux-gpio-consumer.h.patch
+	0014-Input-stmfts-power-in-cell-touch-as-a-DRM-panel-foll.patch
+"
+builddir="$srcdir/linux-$_tag"
+
+prepare() {
+	default_prepare
+	cp "$srcdir/config-$_flavor.$arch" .config
+}
+
+build() {
+	unset LDFLAGS
+	make ARCH="$_carch" LLVM=1 \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1 ))-$_flavor"
+}
+
+package() {
+	make modules_install zinstall dtbs_install \
+		ARCH="$_carch" \
+		LLVM=1 \
+		INSTALL_PATH="$pkgdir"/boot \
+		INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1 \
+		INSTALL_DTBS_PATH="$pkgdir"/boot/dtbs-tmp
+
+	mkdir -p "$pkgdir"/boot/dtbs/qcom
+	cp -r "$pkgdir"/boot/dtbs-tmp/qcom/sm7150* "$pkgdir"/boot/dtbs/qcom
+	rm -rf "$pkgdir"/boot/dtbs-tmp
+
+	rm -f "$pkgdir"/lib/modules/*/build "$pkgdir"/lib/modules/*/source
+
+	install -D "$builddir"/include/config/kernel.release \
+		"$pkgdir"/usr/share/kernel/$_flavor/kernel.release
+}
+
+
+sha512sums="
+bb837959e337c66ff374d8f3aac6593723c4f4eb69fb18f9ff25c5c096c6656fd71149e105255c0f97c83e0bf547b0b0e94ca23eabde7b5f88308e9ecd784e3d  linux-postmarketos-qcom-sm7150-v7.1_rc3.tar.gz
+a207b64f70583e32a01df00b4d5acd32242c315ae36a1e8dbff49b411f011add7bd349ab3f5cbe55148b85132465be26f00b890a1661f15ba2e5de531c7755a9  config-postmarketos-qcom-sm7150.aarch64
+1213d6f0105fc73973125728aea4ec6d7ad6a737ce1a66c83c7ba9a15c19814a25d7f00942430c09e2578ada3e317c997bc9c631d93a01a85eaf58fab262ddf2  0001-Input-stmfts-Fix-the-MODULE_LICENSE-string.patch
+6a2523e8bfcb857ec8791bcdc32c8177492c73a2f7672d60698b5168106917fe3497e74dc40c023d14ed9390b563e7871a2a2f29e69da155790ba761a1f07471  0002-Input-stmfts-Use-dev-struct-directly.patch
+a89358cb25e3cbc15c3b64980101572796c42338a2b160d7a540021541dbb845834ed6dbe4841a6d677190fec8929d6162cc7252aa23cfacbbaeff7de0d13839  0003-Input-stmfts-Switch-to-devm_regulator_bulk_get_const.patch
+c7df358b83f2a3e8d0362d2d56456ae6815efb3ffbbe5a217e20afb947d2e068edf79fdb3cdc48655b85c1a7988f04d601a2c2aa16364e247e0a07565df179b5  0004-Input-stmfts-abstract-reading-information-from-the-f.patch
+8e0fa5955a0d6b94b7aa9f6e19e0eb528e2032edeccaea4d7b10e9ed7969396b6a41be72adb49a9ce85e6bee53952e5b8bc33e0b1e683ca55ecf490e799b5216  0005-Input-stmfts-disable-regulators-when-power-on-fails.patch
+9f0045a4adaf33b325f43eeff3dc2af39c833fdaec64cf8adad4b48290f3d07ebd5981e8cfa7e26399b0bea75154a08b4266a9cb38ae3dce23072c10d92b69b3  0006-Input-stmfts-use-client-to-make-future-code-cleaner.patch
+00da7421534ef7398532e008f3258df185981a1878711416675db405f1d3c9efea08ff4d0772f97a3e0826b363a3b8096ea99b6ccf9acb837f4e25faf97dd6c7  0007-dt-bindings-input-touchscreen-st-stmfts-Introduce-re.patch
+c7075a09c3e2e80d32170cdfc1a60910addeb723975385fb0f1d471a53ab32820b8768a0c1b8b8023583cba3fb956b3f43606238824d578f881d4d9e97673f08  0008-Input-stmfts-add-optional-reset-GPIO-support.patch
+24df94f5bf40de692cf4efc50f2600d5cb9bd69e71a2585a0bfeb0c2f0a86d4a5d798bd4b1353725fa61e2bce1ddb4145523dc565e2f79f70d300ca25599c9e3  0009-dt-bindings-input-touchscreen-st-stmfts-Introduce-ST.patch
+d8c06997625c5d021a19e217642bb3bc2a8c59c13d31cd2dad940efd90af475dba3be49dc31e6e4b4fa0632b65c8a46bc4a146260109292af756a25a569a9c4e  0010-Input-stmfts-support-FTS5.patch
+9efeefbcc925a5c809c1fa0dee4512d96f18ee57c5a8262a78abb7e9f5a4837ab542ade2cf067bd5c75406417925de78ed60f80be596719817f839359c662d7a  0011-arm64-dts-qcom-sdm845-google-Add-STM-FTS-touchscreen.patch
+3dadfec10fdd870a698f904e3c3b9d90df2b8bcaaf96744d048522055302b741589b274d898cb08979d07ec04792bee79fd1dde5d18785bd6458564aa0103490  0012-Input-stmfts-poll-for-CONTROLLER_READY-event-in-stmf.patch
+905342a8c5c986ba8949928c678cb56067df5f0646be8a77c926f78ac0c4b48e43cbe558c12c337c1b7e3d43af9a33e28d18e4db9be2af0504f022a9f4f4e6b1  0013-Input-stmfts-include-linux-gpio-consumer.h.patch
+16e051b6a610b168bd6a2d5b9ee7c0f471749bafd3763b9d0805b9241976c52fdf918c88ddc0ccf5e4c546d8ca8829f9764eea230dbc92220e2dd53029b1b569  0014-Input-stmfts-power-in-cell-touch-as-a-DRM-panel-foll.patch
+"

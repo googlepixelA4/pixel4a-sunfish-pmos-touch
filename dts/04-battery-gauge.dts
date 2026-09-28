@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Battery percentage: enable the PM6150 QG fuel gauge (qcom_qg, read-only)
+ * and give it a battery description. Values as in miromraz/linux
+ * (sunfish-mainline, sunfish-venus-v7.2). The charger is NOT enabled here;
+ * see README ("Battery option B").
+ */
+/ {
+	battery {
+		compatible = "simple-battery";
+		voltage-min-design-microvolt = <3300000>;
+		voltage-max-design-microvolt = <4450000>;
+		charge-full-design-microamp-hours = <3080000>;
+	};
+};
+
+&{/soc@0/spmi@c440000/pmic@0/qgauge@4800} {
+	monitored-battery = <&{/battery}>;
+	status = "okay";
+};

@@ -1,0 +1,5 @@
+# /etc/deviceinfo overrides /usr/share/deviceinfo/deviceinfo for boot-deploy.
+# With this set, boot-deploy copies the DTB from /boot/dtbs/qcom/ and writes
+# the "devicetree" line into /boot/loader/entries/*.conf on every run
+# (a hand-added devicetree line is lost on the next kernel/mkinitfs run).
+deviceinfo_dtb="qcom/sm7150-google-sunfish-pmos"

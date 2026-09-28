@@ -1,0 +1,79 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# stmfts-guard: load the stmfts touch driver early in boot, but never retry
+# automatically after an attempt that took the phone down.
+#
+#   marker absent  -> write marker (synced to disk), modprobe stmfts,
+#                     remove marker once the system has survived CLEAR_AFTER s
+#   marker present -> the previous attempt did not survive: skip loading
+#
+# Re-arm after investigating:  rm /var/lib/stmfts-guard/attempt
+# stmfts stays blacklisted in /etc/modprobe.d, so udev never loads it; this
+# script is the only loader.
+
+set -u
+
+STATE_DIR=${STMFTS_GUARD_DIR:-/var/lib/stmfts-guard}
+CLEAR_AFTER=${STMFTS_GUARD_CLEAR_AFTER:-60}
+MODPROBE=${STMFTS_GUARD_MODPROBE:-modprobe}
+MARKER=$STATE_DIR/attempt
+HISTORY=$STATE_DIR/history
+BOOT_ID=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
+
+log() {
+	echo "stmfts-guard: $*"
+	echo "$(date '+%Y-%m-%d %H:%M:%S') boot=$BOOT_ID $*" >> "$HISTORY"
+}
+
+mkdir -p "$STATE_DIR"
+
+if [ -e "$MARKER" ]; then
+	log "SKIP: marker from boot $(cat "$MARKER" 2>/dev/null) still present," \
+	    "the last load attempt did not survive ${CLEAR_AFTER}s." \
+	    "Not loading stmfts. Remove $MARKER to re-arm."
+	sync
+	exit 0
+fi
+
+# The marker must be on disk before the driver gets a chance to reset the SoC.
+echo "$BOOT_ID" > "$MARKER.tmp"
+mv "$MARKER.tmp" "$MARKER"
+sync
+
+loaded=0
+
+# A clean shutdown/stop inside the window is not a crash: clear the marker.
+# (A hard reset never gets here, so the marker survives it.)
+on_stop() {
+	if [ "$loaded" = 1 ]; then
+		rm -f "$MARKER"
+		log "stopped cleanly before the ${CLEAR_AFTER}s window ended; marker cleared"
+		sync
+	fi
+	exit 0
+}
+trap on_stop TERM INT
+
+log "loading stmfts"
+sync
+$MODPROBE --ignore-install stmfts
+rc=$?
+if [ "$rc" -ne 0 ]; then
+	# A failed load is not a crash; nothing is loaded, so allow a retry.
+	rm -f "$MARKER"
+	log "modprobe failed (exit $rc); marker cleared"
+	sync
+	exit 1
+fi
+
+loaded=1
+log "loaded; marker clears in ${CLEAR_AFTER}s"
+
+# Background sleep + wait so a SIGTERM runs the trap immediately.
+sleep "$CLEAR_AFTER" &
+wait $!
+
+rm -f "$MARKER"
+log "survived ${CLEAR_AFTER}s; marker cleared"
+sync
+exit 0
