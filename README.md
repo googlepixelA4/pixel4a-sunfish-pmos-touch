@@ -1,4 +1,4 @@
-# Pixel 4a (sunfish) on postmarketOS: touch, reset loop, ADSP crash, battery
+# Pixel 4a (sunfish) on postmarketOS: touch, reset loop, ADSP crash, battery, suspend
 
 Fixes that make the Google Pixel 4a (4G, codename *sunfish*, SoC SM7150)
 usable with the generic postmarketOS `qcom-sm7150` port:
@@ -9,8 +9,9 @@ usable with the generic postmarketOS `qcom-sm7150` port:
 | Silent reset loop early in boot | Blacklist the `ipa` driver | 5/5 clean reboots, 0 short boots |
 | ADSP restarts every ~10 s (`sar.cc:27 chre_utils fatal`) | SMP2P `sleepstate` entry in the DT | 0 ADSP crashes (was ~12 per 2 min) |
 | Battery shows 0 % | Enable the PM6150 fuel gauge + `/battery` node | Percentage shown (voltage-based estimate) |
+| Suspend kills the phone (s2idle never returns) | `system-sleep` hook: only WFI while suspended; Bluetooth rfkill-blocked | Suspend + wake by power key and RTC timer work |
 
-> **Caveat.** Tested on **one** Pixel 4a, on **2026-09-28**, with postmarketOS
+> **Caveat.** Tested on **one** Pixel 4a, on **2026-09-28** (suspend: 2026-09-29), with postmarketOS
 > edge, systemd and Phosh. Everything here is experimental. Keep a backup
 > image of `userdata` you can restore with `fastboot` before you start.
 
@@ -67,6 +68,8 @@ On the phone (one unit, 2026-09-28):
 - `system/etc/modprobe.d/*`, `stmfts-guard` and its unit (since then only
   comments and an SPDX line were added). `system/etc/deviceinfo` differs from
   the tested one only in the DTB file name.
+- Suspend (2026-09-29): the `system-sleep` hook (the file here differs from
+  the tested one only in its comments) and `rfkill block bluetooth`.
 
 The repository's scripts, run end-to-end on the build machine:
 
@@ -93,7 +96,8 @@ patches/kernel/   0013 and 0014, our kernel patches (GPL-2.0)
 aport/            modified APKBUILD, its diff, and the one-line config diff
 scripts/          fetch-patches.sh: collects all 14 patches for the aport
 dts/              DT fragments against U-Boot's tree, build script, diffs
-system/           files for the phone: modprobe.d, stmfts-guard, deviceinfo
+system/           files for the phone: modprobe.d, stmfts-guard, deviceinfo,
+                  system-sleep hook (suspend)
 ```
 
 ## Kernel
@@ -264,6 +268,51 @@ History: `/var/lib/stmfts-guard/history`.
 Blind spots: a crash more than 60 s after loading is not caught; a shutdown
 while `modprobe` itself is still running leaves the marker (one skipped boot).
 
+## Suspend / s2idle
+
+Without a fix, every suspend kills the phone: the journal ends at
+`PM: suspend entry (s2idle)`, the phone goes dark, and a short press of the
+power key starts a fresh boot. `pstore` is empty afterwards.
+
+What we found (one unit, 2026-09-29, kernel `7.1_rc3-r2`):
+
+| Test | cpuidle states allowed while suspended | Result |
+|---|---|---|
+| A | WFI only (state1 and state2 disabled) | Suspend held, woke on the power key, no reboot |
+| B | WFI + state1 (per-CPU power collapse; state2 disabled) | Phone died, fresh boot |
+
+So per-CPU power collapse during s2idle is enough; the cluster idle states
+are not needed for it. The root cause is unknown. The power key's interrupt
+path (PMIC arbiter → PDC pin 1 → GIC) was checked in the running DT, in the
+sm7150-mainline `sm7150.dtsi` and in U-Boot's tree: all three route it through
+the PDC, so a missing wake route is not the explanation.
+
+**Workaround:** `system/usr/lib/systemd/system-sleep/cpuidle-s2idle-wfi-only`.
+On `pre` it records which cpuidle states are enabled on every CPU and
+disables all of them except WFI; on `post` it restores them. While awake, all idle states stay
+available. The cost is more drain while suspended (WFI only, no power
+collapse); not measured yet.
+
+```
+phone$ sudo install -m 0755 cpuidle-s2idle-wfi-only /usr/lib/systemd/system-sleep/
+```
+
+**Bluetooth can wake it at once.** In some boots every suspend came back
+after 0.8 s with no wakeup source recorded. With `rfkill block bluetooth` the
+same suspend held. (The Bluetooth UART, `88c000.serial`, is a wakeup source.)
+Why only some boots are affected is unknown. We keep Bluetooth blocked;
+systemd-rfkill restores the block at every boot.
+
+```
+phone$ sudo rfkill block bluetooth
+```
+
+With both in place: suspends of 2 to 47 min, wake by the power key and by
+the RTC (a systemd timer with `WakeSystem=true` woke the phone after 5 min;
+Wi-Fi was back 9 s later), and the normal idle suspend afterwards. The line
+`dwc3-qcom-legacy ...: port-1 HS-PHY not in L2` appears on every resume, good
+or bad; it is not related.
+
 ## Known issues
 
 - **Auto-rotation is inverted.** Auto-rotation in Phosh works since the
@@ -283,6 +332,8 @@ Each part can be undone on its own:
 | DTB | `sudo rm /etc/deviceinfo && sudo mkinitfs` → boot entry without `devicetree`, U-Boot's tree again; reboot |
 | Kernel | See [Kernel rollback](#kernel-rollback) below |
 | IPA blacklist | `sudo rm /etc/modprobe.d/blacklist-ipa.conf`, reboot (the resets come back) |
+| Suspend hook | `sudo rm /usr/lib/systemd/system-sleep/cpuidle-s2idle-wfi-only`; suspend kills the phone again, so also `sudo systemctl mask suspend.target sleep.target` |
+| Bluetooth block | `sudo rfkill unblock bluetooth` (instant wake-ups may come back) |
 | Everything | `fastboot flash userdata <backup image>` |
 
 ### Kernel rollback

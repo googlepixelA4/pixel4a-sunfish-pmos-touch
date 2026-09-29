@@ -1,0 +1,44 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# cpuidle-s2idle-wfi-only: systemd system-sleep hook. While the phone is suspended,
+# allow only WFI (cpuidle state0) on every CPU.
+#
+# Why: with CPU power collapse allowed (cpuidle state1+), s2idle never comes back:
+# the phone goes dark and only a fresh boot recovers it. With every state except
+# WFI disabled, suspend and resume work (see README, "Suspend / s2idle").
+#
+# pre:  save each cpu*/cpuidle/state[1-9]*/disable value to $STATE, then write 1
+# post: restore the saved values exactly (fallback: re-enable all)
+# systemd-sleep calls this as  $1 = pre|post  $2 = suspend|hibernate|...
+# Install: /usr/lib/systemd/system-sleep/cpuidle-s2idle-wfi-only (root, 0755)
+
+STATE=/run/cpuidle-s2idle-wfi-only.saved
+
+log() { echo "cpuidle-s2idle-wfi-only: $*" > /dev/kmsg 2>/dev/null; }
+
+case "$1" in
+pre)
+	: > "$STATE"
+	for d in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state[1-9]*/disable; do
+		[ -w "$d" ] || continue
+		echo "$d $(cat "$d")" >> "$STATE"   # remember the previous value so post restores it exactly
+		echo 1 > "$d" || log "pre: FAILED to disable $d"
+	done
+	log "pre ($2): disabled $(wc -l < "$STATE") cpuidle states (WFI only)"
+	;;
+post)
+	if [ -s "$STATE" ]; then
+		n=0
+		while read -r d v; do
+			echo "$v" > "$d" && n=$((n + 1))
+		done < "$STATE"
+		rm -f "$STATE"
+		log "post ($2): restored $n cpuidle states"
+	else
+		# No saved state (e.g. file lost): fall back to re-enabling everything.
+		for d in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state[1-9]*/disable; do echo 0 > "$d"; done
+		log "post ($2): no saved state, re-enabled all cpuidle states"
+	fi
+	;;
+esac
+exit 0
