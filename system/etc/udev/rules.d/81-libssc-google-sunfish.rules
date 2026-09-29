@@ -1,0 +1,7 @@
+# Pixel 4a (sunfish): accelerometer mount matrix for iio-sensor-proxy (libssc).
+# The Qualcomm sensor core (SSC) reports Android-convention axes, so without this
+# the upright phone reads "bottom-up" and the screen rotates upside down.
+# iio-sensor-proxy (drv-ssc-accel) reads ACCEL_MOUNT_MATRIX from the udev properties
+# of the /dev/fastrpc-* misc device. This matrix is a 180 deg turn about Z (x and y
+# negated), the same as most libssc phones in pmaports.
+SUBSYSTEM=="misc", KERNEL=="fastrpc-*", ENV{ACCEL_MOUNT_MATRIX}="-1, 0, 0; 0, -1, 0; 0, 0, 1"

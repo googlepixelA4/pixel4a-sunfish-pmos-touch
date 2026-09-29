@@ -9,6 +9,7 @@ usable with the generic postmarketOS `qcom-sm7150` port:
 | Silent reset loop early in boot | Blacklist the `ipa` driver | 5/5 clean reboots, 0 short boots |
 | ADSP restarts every ~10 s (`sar.cc:27 chre_utils fatal`) | SMP2P `sleepstate` entry in the DT | 0 ADSP crashes (was ~12 per 2 min) |
 | Battery shows 0 % | Enable the PM6150 fuel gauge + `/battery` node | Percentage shown (voltage-based estimate) |
+| Auto-rotation upside down | udev rule: accelerometer mount matrix | Upright phone shows upright; landscape not confirmed |
 | Suspend kills the phone (s2idle never returns) | `system-sleep` hook: only WFI while suspended; Bluetooth rfkill-blocked | Suspend + wake by power key and RTC timer work |
 
 > **Caveat.** Tested on **one** Pixel 4a, on **2026-09-28** (suspend: 2026-09-29), with postmarketOS
@@ -18,8 +19,8 @@ usable with the generic postmarketOS `qcom-sm7150` port:
 What was tested how is listed under [Testing status](#testing-status).
 
 Not covered (still broken or untouched): audio, charging status
-(charge/discharge state), mobile data via IPA. Auto-rotation works but is
-inverted; see [Known issues](#known-issues).
+(charge/discharge state), mobile data via IPA. Auto-rotation is fixed but
+only checked upright; see [Known issues](#known-issues).
 
 ## Credits
 
@@ -68,6 +69,8 @@ On the phone (one unit, 2026-09-28):
 - `system/etc/modprobe.d/*`, `stmfts-guard` and its unit (since then only
   comments and an SPDX line were added). `system/etc/deviceinfo` differs from
   the tested one only in the DTB file name.
+- Rotation (2026-09-28): the udev rule (the file here differs from the
+  tested one only in its comments).
 - Suspend (2026-09-29): the `system-sleep` hook (the file here differs from
   the tested one only in its comments) and `rfkill block bluetooth`.
 
@@ -97,7 +100,7 @@ aport/            modified APKBUILD, its diff, and the one-line config diff
 scripts/          fetch-patches.sh: collects all 14 patches for the aport
 dts/              DT fragments against U-Boot's tree, build script, diffs
 system/           files for the phone: modprobe.d, stmfts-guard, deviceinfo,
-                  system-sleep hook (suspend)
+                  system-sleep hook (suspend), udev rule (rotation)
 ```
 
 ## Kernel
@@ -315,10 +318,23 @@ or bad; it is not related.
 
 ## Known issues
 
-- **Auto-rotation is inverted.** Auto-rotation in Phosh works since the
-  sleepstate fix (a side effect of the ADSP no longer restarting), but the
-  screen turns the wrong way. Workaround: lock rotation in the Phosh quick
-  settings. A fix (accelerometer mount-matrix) is pending.
+- **Auto-rotation: fixed upright, landscape not confirmed.** Auto-rotation in
+  Phosh works since the sleepstate fix (a side effect of the ADSP no longer
+  restarting), but without a mount matrix the screen turned the wrong way.
+  `system/etc/udev/rules.d/81-libssc-google-sunfish.rules` sets
+  `ACCEL_MOUNT_MATRIX` on `/dev/fastrpc-*` (180 degrees about Z, as for most
+  libssc phones in pmaports). Tested 2026-09-28: upright now reads `normal`
+  and the screen is right side up. Landscape was not confirmed: the screen
+  stayed in portrait in that test. If landscape turns the wrong way, the other
+  candidate is `1, 0, 0; 0, -1, 0; 0, 0, 1` (only y negated).
+
+  ```
+  phone$ sudo install -D -m 644 81-libssc-google-sunfish.rules /etc/udev/rules.d/81-libssc-google-sunfish.rules
+  phone$ sudo udevadm control --reload
+  phone$ sudo udevadm trigger --action=change --subsystem-match=misc --sysname-match='fastrpc-*'
+  phone$ sudo systemctl restart iio-sensor-proxy
+  phone$ monitor-sensor     # upright should read "normal"
+  ```
 - **Battery percentage is rough** and the charge state shows as unknown; see
   [Battery](#why-each-fix) below.
 
@@ -332,6 +348,7 @@ Each part can be undone on its own:
 | DTB | `sudo rm /etc/deviceinfo && sudo mkinitfs` → boot entry without `devicetree`, U-Boot's tree again; reboot |
 | Kernel | See [Kernel rollback](#kernel-rollback) below |
 | IPA blacklist | `sudo rm /etc/modprobe.d/blacklist-ipa.conf`, reboot (the resets come back) |
+| Rotation rule | `sudo rm /etc/udev/rules.d/81-libssc-google-sunfish.rules`, reboot (rotation is upside down again) |
 | Suspend hook | `sudo rm /usr/lib/systemd/system-sleep/cpuidle-s2idle-wfi-only`; suspend kills the phone again, so also `sudo systemctl mask suspend.target sleep.target` |
 | Bluetooth block | `sudo rfkill unblock bluetooth` (instant wake-ups may come back) |
 | Everything | `fastboot flash userdata <backup image>` |
@@ -389,8 +406,8 @@ remoteproc remoteproc1: crash detected in adsp: type fatal error
 
 Adding the node (Mobian commit ff5dc4c) stopped it. Mainline `smp2p.c`
 creates the entry from the node; no extra driver is needed. As a side
-effect, auto-rotation started working once the ADSP stopped restarting, but
-it is inverted (see [Known issues](#known-issues)).
+effect, auto-rotation started working once the ADSP stopped restarting; it
+was upside down until the udev rule (see [Known issues](#known-issues)).
 
 **Battery.** The kernel already has the PM6150 fuel-gauge driver (`qcom_qg`,
 built as a module), but U-Boot's tree leaves the gauge disabled and has no
